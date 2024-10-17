@@ -1,7 +1,7 @@
 {
-  "name": "pureimage",
-  "version": "0.4.18",
-  "description": "Pure JS image drawing API based on Canvas. Export to PNG, JPG, and streams.",
+  "name": "pureimageflexfontinput",
+  "version": "0.4.19",
+  "description": "Pure JS image drawing API based on Canvas. Export to PNG, JPG, and streams. With flexible register font input as buffer",
   "author": {
     "name": "Josh Marinacci",
     "email": "joshua@marinacci.org",
