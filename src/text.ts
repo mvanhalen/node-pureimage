@@ -13,7 +13,7 @@ export type Font = {
   family: string;
   /** An integer representing the font size to use */
   size?: number;
-  binary?: string;
+  binary?: string | Buffer | ArrayBuffer | Uint8Array;
   weight?: number;
   style?: string;
   variant?: string;
@@ -25,21 +25,22 @@ export type Font = {
 };
 
 class RegisteredFont {
-  binary: string;
+  fontData: string | Buffer | ArrayBuffer | Uint8Array;
   family: string;
   weight: number;
   style: string;
   variant: string;
   loaded: boolean;
   font: opentype.Font;
+
   constructor(
-    binaryPath: string,
+    fontData: string | Buffer | ArrayBuffer | Uint8Array,
     family: string,
     weight?: number,
     style?: string,
     variant?: string,
   ) {
-    this.binary = binaryPath;
+    this.fontData = fontData;
     this.family = family;
     this.weight = weight;
     this.style = style;
@@ -48,37 +49,96 @@ class RegisteredFont {
     this.font = null;
   }
 
-  _load(cb) {
+  _load(cb: () => void) {
     if (this.loaded) {
       if (cb) cb();
       return;
     }
-    const onLoad = function (err, font) {
+
+    const onLoad = (err: any, font: opentype.Font) => {
       if (err) throw new Error("Could not load font: " + err);
       this.loaded = true;
       this.font = font;
       if (cb) cb();
-    }.bind(this);
-    opentype.load(this.binary, onLoad);
+    };
+
+    if (typeof this.fontData === "string") {
+      if (this.fontData.startsWith("data:")) {
+        // Base64 string
+        const base64Data = this.fontData.split(",")[1];
+        const fontBuffer = Buffer.from(base64Data, "base64");
+        try {
+          this.font = opentype.parse(fontBuffer);
+          this.loaded = true;
+          if (cb) cb();
+        } catch (err) {
+          throw new Error("Could not parse font data: " + err);
+        }
+      } else {
+        // Assume it's a file path
+        opentype.load(this.fontData, onLoad);
+      }
+    } else if (
+      Buffer.isBuffer(this.fontData) ||
+      this.fontData instanceof ArrayBuffer ||
+      this.fontData instanceof Uint8Array
+    ) {
+      // Font data is a buffer
+      try {
+        this.font = opentype.parse(this.fontData);
+        this.loaded = true;
+        if (cb) cb();
+      } catch (err) {
+        throw new Error("Could not parse font data: " + err);
+      }
+    } else {
+      throw new Error("Invalid font data");
+    }
   }
+
   loadSync() {
     if (this.loaded) {
       return this;
     }
     try {
-      this.font = opentype.loadSync(this.binary);
+      if (typeof this.fontData === "string") {
+        if (this.fontData.startsWith("data:")) {
+          // Base64 string
+          const base64Data = this.fontData.split(",")[1];
+          const fontBuffer = Buffer.from(base64Data, "base64");
+          this.font = opentype.parse(fontBuffer);
+        } else {
+          // Load from file path
+          this.font = opentype.loadSync(this.fontData);
+        }
+      } else if (
+        Buffer.isBuffer(this.fontData) ||
+        this.fontData instanceof ArrayBuffer ||
+        this.fontData instanceof Uint8Array
+      ) {
+        // Parse font data from buffer
+        this.font = opentype.parse(this.fontData);
+      } else {
+        throw new Error("Invalid font data");
+      }
       this.loaded = true;
       return this;
     } catch (err) {
       throw new Error("Could not load font: " + err);
     }
   }
+
   load() {
     return this.loadPromise();
   }
+
   loadPromise() {
-    return new Promise<void>((res, _rej) => {
-      this._load(() => res());
+    return new Promise<void>((res, rej) => {
+      try {
+        this._load(() => res());
+      } catch (err) {
+        rej(err);
+      }
     });
   }
 }
@@ -89,8 +149,8 @@ class RegisteredFont {
  * @returns Font instance
  */
 export function registerFont(
-  /** Path to the font binary file(.eot, .ttf etc.) */
-  binaryPath: string,
+  /** Font data: file path, base64 string, or Buffer */
+  fontData: string | Buffer | ArrayBuffer | Uint8Array,
   /** The name to give the font */
   family: string,
   /** The font weight to use */
@@ -101,7 +161,7 @@ export function registerFont(
   variant?: string,
 ) {
   _fonts[family] = new RegisteredFont(
-    binaryPath,
+    fontData,
     family,
     weight,
     style,
@@ -137,7 +197,7 @@ export function processTextPath(
   x: number,
   /** Y position */
   y: number,
-  /** Indicates wether or not the font should be filled */
+  /** Indicates whether or not the font should be filled */
   fill: boolean,
   hAlign: TextAlign,
   vAlign: TextBaseline,
@@ -188,17 +248,18 @@ export function processTextPath(
     }
   });
 }
+
 type TextMetrics = {
   width: number;
   emHeightAscent: number;
   emHeightDescent: number;
 };
 
-/** Process Text Path */
+/** Measure Text */
 export function measureText(
   /** The {@link Context} to paint on */
   ctx: Context,
-  /** The name to give the font */
+  /** The text to measure */
   text: string,
 ): TextMetrics {
   const font = findFont(ctx._font.family);
